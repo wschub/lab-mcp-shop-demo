@@ -1,9 +1,22 @@
-import hmac
+from contextvars import ContextVar
 from urllib.parse import parse_qs
 
 from starlette.responses import JSONResponse
 
-from app.config import AUTH_TOKEN
+from app import crud
+from app.database import SessionLocal
+
+# id del usuario autenticado en la petición actual
+current_user_id: ContextVar[int | None] = ContextVar("current_user_id", default=None)
+
+
+def _extract_token(scope) -> str:
+    headers = dict(scope["headers"])
+    auth = headers.get(b"authorization", b"").decode()
+    if auth.startswith("Bearer "):
+        return auth[len("Bearer "):].strip()
+    query = parse_qs(scope["query_string"].decode())
+    return query.get("token", [""])[0]  # alternativa: /mcp?token=...
 
 
 class MCPAuthMiddleware:
@@ -11,17 +24,21 @@ class MCPAuthMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and AUTH_TOKEN and scope["path"].startswith("/mcp"):
-            headers = dict(scope["headers"])
-            auth = headers.get(b"authorization", b"").decode()
-            if auth.startswith("Bearer "):
-                provided = auth[len("Bearer "):]
-            else:  # alternativa: /mcp?token=...
-                query = parse_qs(scope["query_string"].decode())
-                provided = query.get("token", [""])[0]
+        if scope["type"] != "http" or not scope["path"].startswith("/mcp"):
+            await self.app(scope, receive, send)
+            return
 
-            if not hmac.compare_digest(provided.encode(), AUTH_TOKEN.encode()):
-                response = JSONResponse({"detail": "Invalid or missing token"}, status_code=401)
-                await response(scope, receive, send)
-                return
-        await self.app(scope, receive, send)
+        token = _extract_token(scope)
+        with SessionLocal() as db:
+            user = crud.get_user_by_token(db, token) if token else None
+
+        if not user:
+            response = JSONResponse({"detail": "Invalid or missing token"}, status_code=401)
+            await response(scope, receive, send)
+            return
+
+        reset = current_user_id.set(user.id)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            current_user_id.reset(reset)

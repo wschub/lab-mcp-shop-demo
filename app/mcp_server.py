@@ -3,6 +3,8 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from app import crud, schemas
 from app.database import SessionLocal
+##auth token
+from app.auth import current_user_id
 
 # Protección DNS-rebinding desactivada: con ngrok el header Host no es localhost.
 # Cuando añadamos auth por token, esto queda cubierto.
@@ -13,8 +15,12 @@ mcp = FastMCP(
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
-DEFAULT_USER_ID = 1  # usuario demo del seed; desaparece cuando haya auth
-
+#DEFAULT_USER_ID = 1  # usuario demo del seed; desaparece cuando haya auth
+def _uid() -> int:
+    uid = current_user_id.get()
+    if uid is None:
+        raise PermissionError("Not authenticated")
+    return uid
 
 def _product(p) -> dict:
     return schemas.ProductOut.model_validate(p).model_dump()
@@ -98,42 +104,48 @@ def import_products_from_csv(csv_text: str) -> dict:
         return {"imported": crud.import_products_csv(db, csv_text)}
 
 
-# ---------- cart & orders ----------
+# ---------- cart & orders (siempre del usuario autenticado) ----------
 @mcp.tool()
-def view_cart(user_id: int = DEFAULT_USER_ID) -> dict:
-    """Show the cart items and total of a user."""
+def whoami() -> dict:
+    """Return the authenticated user."""
     with SessionLocal() as db:
-        return _cart(crud.get_cart(db, user_id))
-
-
-@mcp.tool()
-def add_to_cart(product_id: int, quantity: int = 1, user_id: int = DEFAULT_USER_ID) -> dict:
-    """Add a product to the user's cart (stock is NOT reduced until checkout)."""
-    with SessionLocal() as db:
-        return _cart(crud.add_to_cart(db, user_id, product_id, quantity))
+        return schemas.UserOut.model_validate(crud.get_user(db, _uid())).model_dump()
 
 
 @mcp.tool()
-def remove_from_cart(product_id: int, user_id: int = DEFAULT_USER_ID) -> dict:
-    """Remove a product from the user's cart."""
+def view_cart() -> dict:
+    """Show the cart items and total of the authenticated user."""
     with SessionLocal() as db:
-        return _cart(crud.remove_from_cart(db, user_id, product_id))
+        return _cart(crud.get_cart(db, _uid()))
 
 
 @mcp.tool()
-def checkout(user_id: int = DEFAULT_USER_ID) -> dict:
-    """Complete the purchase: creates the order and reduces stock."""
+def add_to_cart(product_id: int, quantity: int = 1) -> dict:
+    """Add a product to my cart (stock is NOT reduced until checkout)."""
     with SessionLocal() as db:
-        return _order(crud.checkout(db, user_id))
+        return _cart(crud.add_to_cart(db, _uid(), product_id, quantity))
 
 
 @mcp.tool()
-def list_orders(user_id: int = DEFAULT_USER_ID) -> list[dict]:
-    """Purchase history of a user, newest first."""
+def remove_from_cart(product_id: int) -> dict:
+    """Remove a product from my cart."""
     with SessionLocal() as db:
-        return [_order(o) for o in crud.list_orders(db, user_id)]
+        return _cart(crud.remove_from_cart(db, _uid(), product_id))
 
 
+@mcp.tool()
+def checkout() -> dict:
+    """Complete my purchase: creates the order and reduces stock."""
+    with SessionLocal() as db:
+        return _order(crud.checkout(db, _uid()))
+
+
+@mcp.tool()
+def list_orders() -> list[dict]:
+    """My purchase history, newest first."""
+    with SessionLocal() as db:
+        return [_order(o) for o in crud.list_orders(db, _uid())]
+    
 # ---------- KPI ----------
 @mcp.tool()
 def get_top_product() -> dict:
