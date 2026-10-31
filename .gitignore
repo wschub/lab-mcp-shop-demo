@@ -1,0 +1,10 @@
+.qodo/
+.DS_Store
+*.log
+.idea/
+.vscode/
+.venv/
+.env.*
+!.env.example
+__pycache__/
+env/
