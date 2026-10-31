@@ -4,6 +4,9 @@ Small product/user CRUD (FastAPI + PostgreSQL) exposed as a REST API and as an
 MCP server (Streamable HTTP), so Claude can query stock, search products, manage
 a cart, check out and read a best-seller KPI.
 
+> A multi-user version (one token per user, per-user cart and orders) lives in
+> the `feature/per-user-auth` branch.
+
 ## Stack
 Python 3.12 · FastAPI · SQLAlchemy 2 · PostgreSQL · MCP Python SDK (`mcp<2`) · ngrok
 
