@@ -4,6 +4,7 @@
 .idea/
 .vscode/
 .venv/
+.env
 .env.*
 !.env.example
 __pycache__/
