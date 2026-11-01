@@ -8,7 +8,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app import models, schemas
-
+import secrets
 
 # ---------- helpers ----------
 def hash_password(password: str) -> str:
@@ -116,6 +116,23 @@ def create_user(db: Session, data: schemas.UserCreate):
     db.commit()
     db.refresh(user)
     return user
+
+#Token management
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def issue_token(db: Session, user_id: int) -> str:
+    """Genera un token nuevo para el usuario (reemplaza el anterior). Se guarda solo el hash."""
+    user = get_user(db, user_id)
+    token = secrets.token_urlsafe(32)
+    user.token_hash = hash_token(token)
+    db.commit()
+    return token
+
+
+def get_user_by_token(db: Session, token: str):
+    return db.scalar(select(models.User).where(models.User.token_hash == hash_token(token)))
 
 
 # ---------- cart ----------

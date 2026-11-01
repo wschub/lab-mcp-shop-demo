@@ -3,8 +3,8 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app import crud, schemas
-from app.config import AUTH_TOKEN
+from app import crud, models, schemas
+
 from app.database import Base, engine, get_db
 #MCP 
 from fastapi.responses import JSONResponse
@@ -22,11 +22,13 @@ app = FastAPI(title="MCP Shop Demo", lifespan=lifespan)
 app.add_middleware(MCPAuthMiddleware)
 
 
-def verify_token(authorization: str = Header(default="")):
-    """Sin AUTH_TOKEN en .env no se exige nada (versión 1)."""
-    if AUTH_TOKEN and authorization != f"Bearer {AUTH_TOKEN}":
+def verify_token(authorization: str = Header(default=""), db: Session = Depends(get_db)):
+    """Devuelve el usuario dueño del token Bearer, o responde 401."""
+    token = authorization[len("Bearer "):].strip() if authorization.startswith("Bearer ") else ""
+    user = crud.get_user_by_token(db, token) if token else None
+    if not user:
         raise HTTPException(status_code=401, detail="Invalid or missing token")
-
+    return user
 
 @app.exception_handler(LookupError)
 async def not_found_handler(request, exc):
@@ -98,31 +100,35 @@ def create_user(data: schemas.UserCreate, db: Session = Depends(get_db)):
     return crud.create_user(db, data)
 
 
-# ---------- cart & orders ----------
-@app.get("/users/{user_id}/cart", response_model=schemas.CartOut, dependencies=[Depends(verify_token)])
-def get_cart(user_id: int, db: Session = Depends(get_db)):
-    return crud.get_cart(db, user_id)
+# ---------- cart & orders (usuario autenticado) ----------
+@app.get("/me", response_model=schemas.UserOut)
+def me(user: models.User = Depends(verify_token)):
+    return user
 
 
-@app.post("/users/{user_id}/cart", response_model=schemas.CartOut, dependencies=[Depends(verify_token)])
-def add_to_cart(user_id: int, data: schemas.CartAdd, db: Session = Depends(get_db)):
-    return crud.add_to_cart(db, user_id, data.product_id, data.quantity)
+@app.get("/me/cart", response_model=schemas.CartOut)
+def get_cart(user: models.User = Depends(verify_token), db: Session = Depends(get_db)):
+    return crud.get_cart(db, user.id)
 
 
-@app.delete("/users/{user_id}/cart/{product_id}", response_model=schemas.CartOut, dependencies=[Depends(verify_token)])
-def remove_from_cart(user_id: int, product_id: int, db: Session = Depends(get_db)):
-    return crud.remove_from_cart(db, user_id, product_id)
+@app.post("/me/cart", response_model=schemas.CartOut)
+def add_to_cart(data: schemas.CartAdd, user: models.User = Depends(verify_token), db: Session = Depends(get_db)):
+    return crud.add_to_cart(db, user.id, data.product_id, data.quantity)
 
 
-@app.post("/users/{user_id}/checkout", response_model=schemas.OrderOut, dependencies=[Depends(verify_token)])
-def checkout(user_id: int, db: Session = Depends(get_db)):
-    return crud.checkout(db, user_id)
+@app.delete("/me/cart/{product_id}", response_model=schemas.CartOut)
+def remove_from_cart(product_id: int, user: models.User = Depends(verify_token), db: Session = Depends(get_db)):
+    return crud.remove_from_cart(db, user.id, product_id)
 
 
-@app.get("/users/{user_id}/orders", response_model=list[schemas.OrderOut], dependencies=[Depends(verify_token)])
-def list_orders(user_id: int, db: Session = Depends(get_db)):
-    return crud.list_orders(db, user_id)
+@app.post("/me/checkout", response_model=schemas.OrderOut)
+def checkout(user: models.User = Depends(verify_token), db: Session = Depends(get_db)):
+    return crud.checkout(db, user.id)
 
+
+@app.get("/me/orders", response_model=list[schemas.OrderOut])
+def list_orders(user: models.User = Depends(verify_token), db: Session = Depends(get_db)):
+    return crud.list_orders(db, user.id)
 
 # ---------- KPI ----------
 @app.get("/kpi/top-product", response_model=schemas.TopProductOut | None, dependencies=[Depends(verify_token)])
